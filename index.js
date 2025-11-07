@@ -90,11 +90,8 @@ app.get('/api/historical-stats/:membershipType/:membershipId', async (req, res) 
         }
 
         const data = await bungieResponse.json();
-
-        // Check if the Response object is empty, which happens for players with no history
         if (!data.Response || Object.keys(data.Response).length === 0) {
             console.log(`No historical stats found for player ${membershipId}. Returning N/A.`);
-            // Return a default object with "N/A" so the frontend doesn't crash
             return res.json({
                 ironBanner: { kda: 'N/A', kd: 'N/A', winRate: 'N/A' },
                 trials: { kda: 'N/A', kd: 'N/A', winRate: 'N/A' },
@@ -106,25 +103,18 @@ app.get('/api/historical-stats/:membershipType/:membershipId', async (req, res) 
         const stats = data.Response;
         const calculatedStats = {};
         
-        // Use a map to handle Bungie's inconsistent naming and find the right stats block
         const modeMap = {
             ironBanner: 'ironbanner',
             trials: 'trialsofosiris',
-            competitive: 'survival', // We are tracking the 'survival' playlist (37)
+            competitive: 'survival', 
             allPvP: 'allpvp'
         };
 
         Object.keys(modeMap).forEach(ourKey => {
-            // Find the corresponding key in the Bungie response (e.g., "allPvP" matches "allPvP")
-            // We use toLowerCase() to be safe.
             const bungieKey = Object.keys(stats).find(key => key.toLowerCase().includes(modeMap[ourKey]));
-            
-            // Get the 'allTime' stats for that mode, or null if the mode was missing
             const modeStats = bungieKey ? stats[bungieKey]?.allTime : null;
 
             let kda = 'N/A', kd = 'N/A', winRate = 'N/A';
-
-            // Check if stats exist and if the player has actually played the mode
             if (modeStats && modeStats.activitiesEntered?.basic.value > 0) {
                 const kills = modeStats.kills?.basic.value || 0;
                 const deaths = modeStats.deaths?.basic.value || 0;
