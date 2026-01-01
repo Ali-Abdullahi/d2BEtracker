@@ -1,147 +1,193 @@
 require('dotenv').config();
-const express=require('express');
-const cors=require('cors');
-const fetch=require('node-fetch').default;
+const express= require('express');
+const cors= require('cors')
 const app= express();
-
-const PORT= process.env.PORT || 3000;
-const BUNGIE_API_KEY= process.env.BUNGIE_API_KEY;
-const API_ROOT_PATH= "https://www.bungie.net/Platform";
-
+const port= 4001;
 app.use(express.json());
-app.use(cors({origin:'http://localhost:5173'}));
+const API_ROOT_PATH= 'https://www.bungie.net/Platform';
+const key= process.env.BUNGIE_API_KEY
 
-app.get('/',(req,res)=>res.send("Your D2 backend server is up and running"));
+const cleanMatch=(match)=>{
+    return{
+        date:match.period,
+        KDA:match.values.efficiency.basic.displayValue
+    };
+}
 
-app.post('/api/player-full-profile', async (req, res) => {
-    const { displayName, displayNameCode } = req.body;
-    try {
-        const searchUrl = `${API_ROOT_PATH}/Destiny2/SearchDestinyPlayerByBungieName/-1/`;
-        const searchResponse = await fetch(searchUrl, {
-            method: 'POST',
-            headers: { 'X-API-Key': BUNGIE_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ displayName, displayNameCode })
-        });
+const cleanAllTimeStats = (data) => {
+    const stats = data.Response.mergedAllCharacters.results.allPvP.allTime;
 
-        if (searchResponse.status == 204 || !searchResponse.ok) {
-            return res.status(404).json({ error: `Could not find bungie account for ${displayName}.` });
+    return {
+        lifetimeKD: stats.killsDeathsRatio.basic.displayValue,
+        lifetimeKDA: stats.efficiency.basic.displayValue,
+        winRate: (parseFloat(stats.winLossRatio.basic.value) * 100).toFixed(1) + "%"
+    };
+};
+
+app.use(cors({ origin: 'http://localhost:5173' }));
+
+
+app.use((req,res,next)=>{
+    console.log(`Listening for incoming requests ${req.method}, ${req.url}`);
+    next();
+})
+
+app.post("/search-player/",async(req,res)=>{
+    const displayName="Yellowflash3454";
+    const displayNameCode=7726;
+    try{
+        const response= await fetch(`${API_ROOT_PATH}/Destiny2/SearchDestinyPlayerByBungieName/All/`,{
+            method:'POST',
+            headers:{'X-API-KEY':key, 'Content-Type': 'application/json'},
+            body: JSON.stringify({displayName:displayName, displayNameCode:displayNameCode})
+        })
+        if(!response.ok){
+            console.log("Was not able to find displayName and code in Bungie Servers", response.status);
+            return res.status(404); //Not connecting to frontend yet so no reason for .send()
         }
-
-        const searchData = await searchResponse.json();
-        const allMemberships = searchData.Response;
-
-        if (!allMemberships || allMemberships.length === 0) {
-            return res.status(404).json({ error: "Player has no linked Destiny memberships." });
-        }
-
-        const primaryPlatform = allMemberships.find(dm=>dm.crossSaveOverride!==0);
-        const selectedDestinyMembership = primaryPlatform || allMemberships[0];
-
-        if(!selectedDestinyMembership){
-            return res.status(404).json({error:"Player has no linked Destiny Accounts."});
-        }
-
-        console.log(`Success! Found primary account for ${displayName} on platform type:`, selectedDestinyMembership);
-
-        const profileUrl = `${API_ROOT_PATH}/Destiny2/${selectedDestinyMembership.membershipType}/Profile/${selectedDestinyMembership.membershipId}/?components=100,200`;
-        const profileResponse = await fetch(profileUrl, { headers: { 'X-API-Key': BUNGIE_API_KEY } });
-
-        if (!profileResponse.ok) {
-            return res.status(404).json({ error: `Could not retrieve profile data for selected profile.` });
-        }
-                
-        const profileData = await profileResponse.json();
-        
-  
-        console.log(`Full profile data received for ${displayName}. Character IDs can be found in characters.data below:`);
-        console.log(JSON.stringify(profileData.Response, null, 2));
-                
-        return res.json({
-            bungieGlobalDisplayName: selectedDestinyMembership.bungieGlobalDisplayName,
-            bungieGlobalDisplayNameCode: selectedDestinyMembership.bungieGlobalDisplayNameCode,
-            destinyMembership: selectedDestinyMembership,
-            profileData: profileData.Response
-        });
-
-    } 
-    catch (error) {
-        console.error(`Backend error for ${displayName}:`, error);
-        res.status(500).json({ error: "Internal Server error during full profile fetch." });
+        const data= await response.json();
+        console.log("Successfully found membershipID for: ",displayName,"#",displayNameCode)
+        res.json(data);
     }
-});
+    catch(error){
+        console.log("Error:",error);
+        res.status(500); //Not connecting to frontend yet so no reason for .send()
 
-
-
-
-
-
-
-app.get('/api/historical-stats/:membershipType/:membershipId', async (req, res) => {
-    const { membershipType, membershipId } = req.params;
-    const url = `${API_ROOT_PATH}/Destiny2/${membershipType}/Account/${membershipId}/Character/0/Stats/?modes=5,19,37,84&groups=1`;
-
-    console.log(`Requesting historical stats from: ${url}`);
-
-    try {
-        const bungieResponse = await fetch(url, { headers: { 'X-API-Key': BUNGIE_API_KEY } });
-        if (!bungieResponse.ok) {
-            console.error(`Bungie API error for ${membershipId}: ${bungieResponse.status}`);
-            return res.status(bungieResponse.status).json({ error: 'Failed to fetch lifetime stats from Bungie.' });
-        }
-
-        const data = await bungieResponse.json();
-        if (!data.Response || Object.keys(data.Response).length === 0) {
-            console.log(`No historical stats found for player ${membershipId}. Returning N/A.`);
-            return res.json({
-                ironBanner: { kda: 'N/A', kd: 'N/A', winRate: 'N/A' },
-                trials: { kda: 'N/A', kd: 'N/A', winRate: 'N/A' },
-                competitive: { kda: 'N/A', kd: 'N/A', winRate: 'N/A' },
-                overallPvp: { kda: 'N/A', kd: 'N/A', winRate: 'N/A' }
-            });
-        }
-        
-        const stats = data.Response;
-        const calculatedStats = {};
-        
-        const modeMap = {
-            ironBanner: 'ironbanner',
-            trials: 'trialsofosiris',
-            competitive: 'survival', 
-            allPvP: 'allpvp'
-        };
-
-        Object.keys(modeMap).forEach(ourKey => {
-            const bungieKey = Object.keys(stats).find(key => key.toLowerCase().includes(modeMap[ourKey]));
-            const modeStats = bungieKey ? stats[bungieKey]?.allTime : null;
-
-            let kda = 'N/A', kd = 'N/A', winRate = 'N/A';
-            if (modeStats && modeStats.activitiesEntered?.basic.value > 0) {
-                const kills = modeStats.kills?.basic.value || 0;
-                const deaths = modeStats.deaths?.basic.value || 0;
-                const assists = modeStats.assists?.basic.value || 0;
-                const wins = modeStats.activitiesWon?.basic.value || 0;
-                const totalGames = modeStats.activitiesEntered?.basic.value;
-                
-                kd = (deaths === 0 ? kills : kills / deaths).toFixed(2);
-                kda = (deaths === 0 ? (kills + assists) : (kills + assists) / deaths).toFixed(2);
-                winRate = ((wins / totalGames) * 100).toFixed(0);
-            }
-            
-
-            const finalKey = ourKey === 'allPvP' ? 'overallPvp' : ourKey;
-            calculatedStats[finalKey] = { kda, kd, winRate };
-        });
-        
-        console.log(`Successfully processed stats for ${membershipId}:`, calculatedStats);
-        res.json(calculatedStats);
-
-    } catch (error) {
-        console.error(`Backend error during historical stats fetch for ${membershipId}:`, error);
-        res.status(500).json({ error: "Internal server error during historical stats fetch." });
     }
-});
+})
+
+app.get("/get-char-ids/:mType/:mId",async(req,res)=>{
+    const { mType, mId } = req.params;
+    try{
+        const response= await fetch(`${API_ROOT_PATH}/Destiny2/${mType}/Profile/${mId}/?components=Profiles`,{
+            headers:{'X-API-KEY': key}
+        })
+        if(!response.ok){
+            console.log("Error:",response.error);
+            return res.status(400).send("Error:", error);
+        }
+        const data= await response.json();
+        const charIds= data.Response.profile.data.characterIds;
+        res.send({
+            characters:charIds
+        });
+    }
+    catch(error){
+        console.log("Something crashed while accessing bungie servers:",error);
+        res.status(500);
+    }
+})
+
+ // Most recent 10 games of trials account wide
+app.get("/get-Trials-stats/:mType/:mId/:charIds",async(req,res)=>{
+    const{mType,mId,charIds}= req.params;
+    const charArray = charIds.split(',');
+    try{
+        const response= await Promise.all(charArray.map(id=> fetch(`${API_ROOT_PATH}/Destiny2/${mType}/Account/${mId}/Character/${id}/Stats/Activities/?count=10&mode=84`,{headers:{ 'X-API-KEY': key }})))
 
 
-app.listen(PORT, () => {
-    console.log(`Server ready on http://localhost:${PORT}`);
-});
+        if (response.some(r => !r.ok)) {
+            return res.status(400).send("Bungie account or Character not found");
+        }
+        const data= await Promise.all(response.map(r=>r.json()));
+
+        const matches= data.flatMap(m=>m.Response.activities || [])
+
+        const cleanedMatches= matches.map(cleanMatch);
+        cleanedMatches.sort((a,b)=> new Date(b.date)- new Date(a.date));
+        const rec_10= cleanedMatches.slice(0,10);
+        const totalKDA = rec_10.reduce((sum, match) => sum + parseFloat(match.KDA), 0);
+        const averageKDA = rec_10.length > 0 ? (totalKDA / rec_10.length).toFixed(2) : "0.00";
+        res.json({'averageKDA': averageKDA, 'gamesCounted': rec_10.length, 'history':rec_10})
+    }
+    catch(error){
+        console.log("Server crashed while looking for account:", error);
+        res.status(500).send("Server crashed on Bungies end.")
+    }
+
+})
+
+ // Most recent 10 games of Iron Banner account wide
+ app.get("/get-IB-stats/:mType/:mId/:charIds",async(req,res)=>{
+    const{mType,mId,charIds}= req.params;
+    const charArray = charIds.split(',');
+    try{
+        const response= await Promise.all(charArray.map(id=> fetch(`${API_ROOT_PATH}/Destiny2/${mType}/Account/${mId}/Character/${id}/Stats/Activities/?count=10&mode=19`,{headers:{ 'X-API-KEY': key }})))
+
+
+        if (response.some(r => !r.ok)) {
+            return res.status(400).send("Bungie account or Character not found");
+        }
+        const data= await Promise.all(response.map(r=>r.json()));
+
+        const matches= data.flatMap(m=>m.Response.activities || [])
+
+        const cleanedMatches= matches.map(cleanMatch);
+        cleanedMatches.sort((a,b)=> new Date(b.date)- new Date(a.date));
+        const rec_10= cleanedMatches.slice(0,10);
+        const totalKDA = rec_10.reduce((sum, match) => sum + parseFloat(match.KDA), 0);
+        const averageKDA = rec_10.length > 0 ? (totalKDA / rec_10.length).toFixed(2) : "0.00";
+        res.json({'averageKDA': averageKDA, 'gamesCounted': rec_10.length, 'history':rec_10})
+    }
+    catch(error){
+        console.log("Server crashed while looking for account:", error);
+        res.status(500).send("Server crashed on Bungies end.")
+    }
+
+})
+
+// Most recent 10 games of pvp Competitive account wide
+app.get("/get-Comp-stats/:mType/:mId/:charIds",async(req,res)=>{
+    const{mType,mId,charIds}= req.params;
+    const charArray = charIds.split(',');
+    try{
+        const response= await Promise.all(charArray.map(id=> fetch(`${API_ROOT_PATH}/Destiny2/${mType}/Account/${mId}/Character/${id}/Stats/Activities/?count=10&mode=69`,{headers:{ 'X-API-KEY': key }})))
+
+
+        if (response.some(r => !r.ok)) {
+            return res.status(400).send("Bungie account or Character not found");
+        }
+        const data= await Promise.all(response.map(r=>r.json()));
+
+        const matches= data.flatMap(m=>m.Response.activities || [])
+
+        const cleanedMatches= matches.map(cleanMatch);
+        cleanedMatches.sort((a,b)=> new Date(b.date)- new Date(a.date));
+        const rec_10= cleanedMatches.slice(0,10);
+        const totalKDA = rec_10.reduce((sum, match) => sum + parseFloat(match.KDA), 0);
+        const averageKDA = rec_10.length > 0 ? (totalKDA / rec_10.length).toFixed(2) : "0.00";
+        res.json({'averageKDA': averageKDA, 'gamesCounted': rec_10.length, 'history':rec_10})
+    }
+    catch(error){
+        console.log("Server crashed while looking for account:", error);
+        res.status(500).send("Server crashed on Bungies end.")
+    }
+
+})
+
+app.get("/allTime-Stats/:mType/:mId",async(req,res)=>{
+    const{mType,mId}= req.params;
+    try{
+        const response= await fetch(`${API_ROOT_PATH}/Destiny2/${mType}/Account/${mId}/Stats/?groups=General`,{headers:{'X-API-KEY':key}})
+        if(!response.ok){
+            console.log("All time stats not found for RedPhantom728!",error)
+            return res.status(404).send();
+        }
+        const data= await response.json();
+        const cleanData= cleanAllTimeStats(data)
+        res.json(cleanData);
+    }
+    catch(error){
+        console.log("Server crashed while looking for All Time stats for Redphantom728!:", error);
+        res.status(500).send();
+    }
+
+})
+
+
+
+
+
+app.listen(port,()=>{
+    console.log("The D2 Tracker is up and running!")
+})
