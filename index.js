@@ -31,7 +31,7 @@ app.use((req,res,next)=>{
     console.log(`Listening for incoming requests ${req.method}, ${req.url}`);
     next();
 })
-
+// Get membership ids
 app.post("/search-player/",async(req,res)=>{
     const displayName="Yellowflash3454";
     const displayNameCode=7726;
@@ -51,11 +51,11 @@ app.post("/search-player/",async(req,res)=>{
     }
     catch(error){
         console.log("Error:",error);
-        res.status(500); //Not connecting to frontend yet so no reason for .send()
+        res.status(500).send();
 
     }
 })
-
+//Get character ids
 app.get("/get-char-ids/:mType/:mId",async(req,res)=>{
     const { mType, mId } = req.params;
     try{
@@ -164,13 +164,13 @@ app.get("/get-Comp-stats/:mType/:mId/:charIds",async(req,res)=>{
     }
 
 })
-
+//All time stats for Kd, Kda, Win%
 app.get("/allTime-Stats/:mType/:mId",async(req,res)=>{
     const{mType,mId}= req.params;
     try{
         const response= await fetch(`${API_ROOT_PATH}/Destiny2/${mType}/Account/${mId}/Stats/?groups=General`,{headers:{'X-API-KEY':key}})
         if(!response.ok){
-            console.log("All time stats not found for RedPhantom728!",error)
+            console.log("All time stats not found",error)
             return res.status(404).send();
         }
         const data= await response.json();
@@ -178,7 +178,7 @@ app.get("/allTime-Stats/:mType/:mId",async(req,res)=>{
         res.json(cleanData);
     }
     catch(error){
-        console.log("Server crashed while looking for All Time stats for Redphantom728!:", error);
+        console.log("Server crashed while looking for All Time stats", error);
         res.status(500).send();
     }
 
